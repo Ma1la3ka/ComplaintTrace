@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Complaint assistant</title>
+<style>
+  :root { --bg:#fff; --fg:#1b1b1b; --muted:#666; --card:#f4f5f7; --line:#dcdfe4; --accent:#0b6b4f; --warn:#b4540a; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14161a; --fg:#eceef1; --muted:#9aa0a9; --card:#1e2127; --line:#2f343c; --accent:#3fbf93; --warn:#f0a35e; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, sans-serif; }
+  main { max-width:900px; margin:0 auto; padding:20px 16px 40px; display:grid; gap:16px; grid-template-columns:1fr; }
+  @media (min-width:800px) { main { grid-template-columns:2fr 1fr; } header, #langs { grid-column:1/-1; } }
+  h1 { font-size:1.3rem; margin:0; } p.sub { margin:4px 0 0; color:var(--muted); font-size:.9rem; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  button { font:inherit; padding:9px 14px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--fg); cursor:pointer; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  #langs { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  #log { height:360px; overflow-y:auto; display:flex; flex-direction:column; gap:10px; }
+  .msg { max-width:85%; padding:9px 12px; border-radius:10px; border:1px solid var(--line); background:var(--bg); white-space:pre-wrap; }
+  .msg.caller { align-self:flex-end; border-color:var(--accent); }
+  .msg small { display:block; color:var(--muted); margin-top:4px; }
+  #row { display:flex; gap:8px; margin-top:12px; }
+  #text { flex:1; padding:9px 12px; font:inherit; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
+  .badge { display:inline-block; padding:2px 10px; border-radius:99px; font-size:.8rem; border:1px solid var(--line); }
+  .badge.logged { color:var(--accent); border-color:var(--accent); } .badge.escalated { color:var(--warn); border-color:var(--warn); }
+  dl { margin:10px 0 0; display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:.9rem; } dt { color:var(--muted); } dd { margin:0; word-break:break-word; }
+  #outcome { margin-top:12px; font-size:.9rem; } #outcome p { margin:6px 0 0; color:var(--muted); }
+  #notice { font-size:.85rem; color:var(--muted); }
+  #err { color:var(--warn); font-size:.9rem; min-height:1.2em; }
+  .msg.thinking { color:var(--muted); }
+  #aibar { grid-column:1/-1; font-size:.92rem; } #aibar.ok { border-color:var(--accent); } #aibar.off { border-color:var(--warn); }
+  #aibar a { margin-right:14px; color:var(--accent); font-weight:600; }
+  footer { grid-column:1/-1; color:var(--muted); font-size:.8rem; }
+  .spin { display:inline-block; width:14px; height:14px; margin-right:8px; vertical-align:-2px; border:2px solid var(--line);
+          border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration:2.4s; } }
+</style>
+</head>
+<body>
+<main>
+  <div id="aibar" class="card" hidden></div>
+  <header>
+    <h1>Bank complaint assistant</h1>
+    <p class="sub">You are talking to an AI. Never share your PIN, OTP, password or full card number. Say or type "human" to reach a person.</p>
+  </header>
+
+  <div id="langs">
+    <span>Choose a language:</span>
+    <button data-lang="yo">Yorùbá</button>
+    <button data-lang="ha">Hausa</button>
+    <button data-lang="ig">Igbo</button>
+    <button data-lang="en">English</button>
+  </div>
+
+  <section class="card">
+    <div id="log" aria-live="polite"></div>
+    <div id="row">
+      <input id="text" placeholder="Type here (or use the microphone)" disabled>
+      <button id="send" disabled>Send</button>
+      <button id="mic" disabled>🎤 Record</button>
+    </div>
+    <div id="err"></div>
+  </section>
+
+  <aside class="card">
+    <strong>Complaint record</strong>
+    <div style="margin-top:8px"><span id="status" class="badge">not started</span></div>
+    <dl id="slots"></dl>
+    <div id="outcome"></div>
+    <p id="notice">Fields fill in as the caller answers. Reference: <span id="ref">-</span></p>
+  </aside>
+  <footer>Powered by Awarri Technologies and the Federal Government of Nigeria (N-ATLaS).</footer>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let sid = null, lang = null, rec = null, chunks = [];
+
+function add(who, text, en) {
+  const d = document.createElement("div");
+  d.className = "msg " + who;
+  d.textContent = text;
+  if (en && en !== text) { const s = document.createElement("small"); s.textContent = "English: " + en; d.appendChild(s); }
+  $("log").appendChild(d); $("log").scrollTop = $("log").scrollHeight;
+}
+let thinkingEl = null, thinkTimer = null;
+function showThinking(text) {
+  hideThinking();
+  const d = document.createElement("div"); d.className = "msg bot thinking";
+  const sp = document.createElement("span"); sp.className = "spin";
+  const tx = document.createElement("span"); tx.textContent = text;
+  d.append(sp, tx); $("log").appendChild(d); $("log").scrollTop = $("log").scrollHeight;
+  thinkingEl = d; const t0 = Date.now();
+  thinkTimer = setInterval(() => {                       // after a few seconds, tell the caller it is still working
+    const sec = Math.round((Date.now() - t0) / 1000);
+    if (sec >= 5) tx.textContent = text + " (" + sec + "s. The speech model can take a little while.)";
+  }, 1000);
+}
+function hideThinking() { clearInterval(thinkTimer); if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; } }
+function busy(on) { $("text").disabled = $("send").disabled = on; $("mic").disabled = on || lang === "en"; }
+
+function render(r) {
+  $("status").textContent = r.status; $("status").className = "badge " + r.status;
+  $("ref").textContent = r.ref || "-";
+  const dl = $("slots"); dl.innerHTML = "";
+  for (const [k, v] of Object.entries(r.slots || {})) {
+    if (k.startsWith("_")) continue;
+    const dt = document.createElement("dt"), dd = document.createElement("dd");
+    dt.textContent = k; dd.textContent = v; dl.append(dt, dd);
+  }
+  const live = r.status === "active";
+  $("text").disabled = $("send").disabled = !live; $("mic").disabled = !live || lang === "en";   // no English speech model yet
+
+  // What ComplaintTrace did with this call (only present once the call has ended and ComplaintTrace is running)
+  const o = $("outcome"); o.textContent = "";
+  if (r.trace) {
+    const done = r.trace.decision === "auto_resolved";
+    const b = document.createElement("span");
+    b.className = "badge " + (done ? "logged" : "escalated");
+    b.textContent = done ? "Resolved automatically" : "Passed to a bank officer";
+    o.append(b);
+    if (r.trace.action) { const p = document.createElement("p"); p.textContent = "Action: " + r.trace.action; o.append(p); }
+  }
+  // Fallback wording only when ComplaintTrace did not answer. Never claim a live human connection: there is none.
+  if (!live && !r.trace) {
+    if (r.status === "escalated") add("bot", "Your complaint has been recorded and passed to a bank officer.");
+    else if (r.status === "logged") add("bot", "Your complaint has been recorded.");
+  }
+}
+async function api(path, opts) {
+  $("err").textContent = "";
+  try {
+    const res = await fetch(path, opts); const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    return data;
+  } catch (e) { $("err").textContent = "Problem: " + e.message; return null; }
+}
+document.querySelectorAll("[data-lang]").forEach(b => b.onclick = async () => {
+  lang = b.dataset.lang; $("log").innerHTML = ""; $("err").textContent = ""; showThinking("Starting. The first reply can take a little while...");
+  const r = await api("/api/sessions", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({language:lang}) });
+  hideThinking(); if (!r) return; $("err").textContent = ""; sid = r.session_id; add("bot", r.reply, r.reply_en); render(r);
+  if (lang === "en") $("err").textContent = "English is typed only for now. Voice works in Yoruba, Hausa and Igbo.";
+});
+async function turn(opts, label) {
+  $("err").textContent = ""; busy(true); showThinking(label || "Thinking...");
+  const r = await api(`/api/sessions/${sid}/turn`, opts); hideThinking();
+  if (!r) { busy(false); return; }                      // failed: let the caller try again
+  $("err").textContent = "";
+  if (r.transcript) add("caller", r.transcript);
+  add("bot", r.reply, r.reply_en); render(r);
+}
+async function sendText() {
+  const t = $("text").value.trim(); if (!t || !sid) return; $("text").value = "";
+  await turn({ method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({text:t}) });
+}
+$("send").onclick = sendText; $("text").onkeydown = e => { if (e.key === "Enter") sendText(); };
+$("mic").onclick = async () => {
+  if (rec && rec.state === "recording") { rec.stop(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const an = ctx.createAnalyser(); an.fftSize = 1024;
+    ctx.createMediaStreamSource(stream).connect(an);
+    const buf = new Uint8Array(an.fftSize); let peak = 0;
+    const meter = setInterval(() => {
+      an.getByteTimeDomainData(buf);
+      for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+    }, 100);
+    rec = new MediaRecorder(stream); chunks = [];
+    rec.ondataavailable = e => chunks.push(e.data);
+    rec.onstop = async () => {
+      clearInterval(meter); ctx.close();
+      stream.getTracks().forEach(t => t.stop()); $("mic").textContent = "🎤 Record";
+      if (peak < 6) { $("err").textContent = "I could not hear anything. Check your microphone and try again."; return; }
+      const fd = new FormData(); fd.append("audio", new Blob(chunks, { type: rec.mimeType }), "clip.webm");
+      await turn({ method: "POST", body: fd }, "Listening to your recording...");
+    };
+    rec.start(); $("mic").textContent = "⏹ Stop and send";
+    $("err").textContent = "Recording... speak now.";
+  } catch (e) { $("err").textContent = "Microphone not available: " + e.message; }
+};
+
+// ---- Is the AI awake? Needs live_switch.py on the server. If that is missing, the page behaves as before. ----
+function setLangButtons(on) { document.querySelectorAll("[data-lang]").forEach(b => b.disabled = !on); }
+function makeLink(href, text) { const a = document.createElement("a"); a.href = href; a.textContent = text; a.target = "_blank"; a.rel = "noopener"; return a; }
+async function refreshStatus() {
+  const bar = $("aibar");
+  try {
+    const res = await fetch("/api/status"); if (!res.ok) throw new Error("no status service");
+    const st = await res.json(); bar.hidden = false; bar.replaceChildren();
+    if (st.online) { bar.className = "card ok"; bar.textContent = "The AI is online. Choose a language to start."; }
+    else {
+      bar.className = "card off";
+      const msg = document.createElement("div");
+      msg.textContent = "The AI is asleep to save GPU time. Ask for a live session; it is usually ready in about 10 to 15 minutes.";
+      const row = document.createElement("div"); row.style.marginTop = "6px";
+      const wa = ((st.contact || {}).whatsapp || "").replace(/\D/g, ""), mail = (st.contact || {}).email || "";
+      const text = encodeURIComponent("Hello, please start the live demo of the bank complaint assistant.");
+      if (wa) row.append(makeLink("https://wa.me/" + wa + "?text=" + text, "Message on WhatsApp"));
+      if (mail) row.append(makeLink("mailto:" + mail + "?subject=" + encodeURIComponent("Live demo request") + "&body=" + text, "Send an email"));
+      bar.append(msg, row);
+    }
+    setLangButtons(st.online || sid !== null);              // never lock the page in the middle of a call
+  } catch (e) { bar.hidden = true; setLangButtons(true); }
+}
+refreshStatus(); setInterval(refreshStatus, 10000);
+</script>
+</body>
+</html>

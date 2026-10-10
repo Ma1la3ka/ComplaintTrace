@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cases | Bank complaint assistant</title>
+<style>
+ body{font-family:system-ui,sans-serif;background:#14161a;color:#e6e8eb;margin:0;padding:24px}
+ h1{font-size:20px;margin:0 0 4px} h2{font-size:16px;margin:22px 0 6px} .sub{color:#9aa3ad;font-size:13px;margin-bottom:16px}
+ .stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+ .stat{background:#1e2127;border:1px solid #2c313a;border-radius:10px;padding:10px 16px;min-width:110px}
+ .stat b{display:block;font-size:22px} .stat span{color:#9aa3ad;font-size:12px}
+ .case{background:#1e2127;border:1px solid #2c313a;border-radius:10px;padding:12px 16px;margin-bottom:10px}
+ .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+ .badge{border-radius:999px;padding:2px 10px;font-size:12px;border:1px solid}
+ .auto_resolved{color:#5fd39a;border-color:#2f7a58} .needs_human{color:#ffb454;border-color:#8a5d1f}
+ .resolved{color:#7fb2ff;border-color:#35588f} .high{color:#ff7b7b;border-color:#8f3535}
+ .muted{color:#9aa3ad;font-size:13px;margin-top:6px} button{background:#2a2f38;color:#e6e8eb;border:1px solid #3a414c;border-radius:8px;padding:4px 10px;cursor:pointer}
+ button:hover{background:#343b46} #err{color:#ff7b7b;margin-bottom:12px}
+</style></head><body>
+<h1>Complaint operations</h1><div class="sub">Calls handled by the assistant. Auto-resolved means the system settled it; needs human means a person must act. Actions are simulated.</div>
+<div id="err"></div><div class="stats" id="stats"></div>
+<h2>Automatic reversals</h2><div id="rev"></div>
+<h2>Incidents and emerging issues</h2><div class="sub" id="isolated"></div><div id="inc"></div>
+<h2>Cases</h2><div id="list"></div>
+<script>
+const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e};
+const LABEL={auto_resolved:"Auto-resolved",needs_human:"Needs human",resolved:"Resolved by human"};
+async function override(ref,status){
+  const note=prompt("Short note for the record:")||"";
+  await fetch("/api/trace/override/"+encodeURIComponent(ref),{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({status,note,by:"agent"})});
+  load();
+}
+const LV={systemic:["Systemic","needs_human"],emerging:["Emerging (early warning)","resolved"],spike:["Unexplained spike","resolved"]};
+const PR={high:"high",medium:"needs_human",low:"resolved"};
+const hm=s=>s?s.slice(5,16):"-";   // month-day hour:minute, so dates are never ambiguous
+function incCard(i){
+  const d=el("div","case"),r=el("div","row"),lv=LV[i.level]||[i.level,"resolved"];
+  r.append(el("b","",i.title),el("span","badge "+lv[1],lv[0]),el("span","badge "+PR[i.priority],i.priority+" priority"));
+  d.append(r);
+  d.append(el("div","muted",i.complaints+" complaints across channels: "+Object.entries(i.channels).map(([k,v])=>k+" "+v).join(", ")));
+  if(i.failed_txns)d.append(el("div","muted","In the transaction log: "+i.failed_txns+" failed. "+i.silent_customers+" debited customers have NOT complained yet. "+i.unreversed+" still unreversed (N"+Number(i.unreversed_amount).toLocaleString()+")"+(i.overdue?", "+i.overdue+" past the refund deadline":"")+"."));
+  d.append(el("div","muted","Likely cause: "+i.cause));
+  d.append(el("div","muted","Suggested action: "+i.action));
+  d.append(el("div","muted","First complaint "+hm(i.first_complaint)+" | early warning "+hm(i.early_warning_at)+" | systemic "+hm(i.systemic_at)));
+  return d;
+}
+function revBlock(r){
+  const d=el("div","case"),n=x=>"N"+Number(x).toLocaleString();
+  d.append(el("div","",r.count+" failed transactions were refunded automatically, worth "+n(r.amount)+", without waiting for a complaint."));
+  d.append(el("div","muted",r.overdue+" of them were already past their deadline when the system picked them up ("+n(r.overdue_amount)+")."));
+  d.append(el("div","muted","By type: "+(Object.entries(r.by_rail).map(([k,v])=>k+" "+v).join(", ")||"none yet")));
+  d.append(el("div","muted","Deadlines: "+r.policies.map(p=>p.rail+" "+p.deadline_hours+"h ("+p.status+")").join(" | ")));
+  d.append(el("div","muted","Actions are simulated. 'CBN rule' is a final rule, 'Draft' is a proposal, 'Assumption' means we found no rule. Replace with the bank's own policy."));
+  return d;
+}
+function card(c){
+  const d=el("div","case"),r=el("div","row");
+  r.append(el("b","",c.ref),el("span","badge "+c.status,LABEL[c.status]||c.status));
+  if(c.priority==="high")r.append(el("span","badge high","urgent"));
+  if(c.overridden)r.append(el("span","muted","(human override)"));
+  r.append(el("span","muted",[c.language,c.issue,c.amount?("N"+Number(c.amount).toLocaleString()):""].filter(Boolean).join(" | ")));
+  d.append(r);
+  if(c.reasons&&c.reasons[1])d.append(el("div","muted","Why: "+c.reasons[1]));
+  if(c.action)d.append(el("div","muted","Action: "+c.action));
+  if(c.transaction)d.append(el("div","muted","Matched "+c.transaction.txn_id+" ("+c.transaction.rail+", "+c.transaction.status+", "+c.transaction.error_code+")"+(c.alert_id?" | incident "+c.alert_id:"")));
+  if(c.override_note)d.append(el("div","muted","Note: "+c.override_note));
+  const b=el("div","row");b.style.marginTop="8px";
+  if(c.status!=="resolved"){const x=el("button","","Mark resolved");x.onclick=()=>override(c.ref,"resolved");b.append(x)}
+  if(c.status!=="needs_human"){const y=el("button","","Send to human");y.onclick=()=>override(c.ref,"needs_human");b.append(y)}
+  d.append(b);return d;
+}
+async function load(){
+  const err=document.getElementById("err");
+  try{
+    const r=await fetch("/api/trace/cases"),j=await r.json();
+    if(j.error){err.textContent=j.error;return}err.textContent="";
+    const s=j.stats,box=document.getElementById("stats");box.replaceChildren();
+    [["Total",s.total],["Auto-resolved",s.auto_resolved],["Needs human",s.needs_human],["Resolved by human",s.resolved_by_human],["Auto rate",Math.round(s.auto_rate*100)+"%"]]
+      .forEach(([k,v])=>{const a=el("div","stat");a.append(el("b","",v),el("span","",k));box.append(a)});
+    document.getElementById("rev").replaceChildren(revBlock(j.reversals));
+    document.getElementById("inc").replaceChildren(...(j.incidents||[]).map(incCard));
+    document.getElementById("isolated").textContent=(j.isolated_cases||0)+" isolated cases are handled one by one and are not part of any incident.";
+    document.getElementById("list").replaceChildren(...j.cases.map(card));
+  }catch(e){err.textContent="Cannot load cases: "+e}
+}
+load();setInterval(load,5000);
+</script></body></html>

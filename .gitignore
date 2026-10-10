@@ -1,0 +1,10 @@
+.env
+*.db
+*.bak
+*.pyc
+__pycache__/
+debug_audio/
+cf.log
+complainttrace_data/
+links.csv
+alerts.csv
