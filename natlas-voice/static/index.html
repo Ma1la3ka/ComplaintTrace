@@ -32,6 +32,8 @@
   .msg.thinking { color:var(--muted); }
   #aibar { grid-column:1/-1; font-size:.92rem; } #aibar.ok { border-color:var(--accent); } #aibar.off { border-color:var(--warn); }
   #aibar a { margin-right:14px; color:var(--accent); font-weight:600; }
+  .staff { padding:7px 14px; border:1px solid var(--accent); border-radius:8px; color:var(--accent); text-decoration:none; font-weight:600; font-size:.9rem; }
+  .staff:hover { background:var(--accent); color:#fff; }
   footer { grid-column:1/-1; color:var(--muted); font-size:.8rem; }
   .spin { display:inline-block; width:14px; height:14px; margin-right:8px; vertical-align:-2px; border:2px solid var(--line);
           border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
@@ -43,7 +45,10 @@
 <main>
   <div id="aibar" class="card" hidden></div>
   <header>
-    <h1>Bank complaint assistant</h1>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+      <h1>Bank complaint assistant</h1>
+      <a class="staff" href="/cases">Staff view</a>
+    </div>
     <p class="sub">You are talking to an AI. Never share your PIN, OTP, password or full card number. Say or type "human" to reach a person.</p>
   </header>
 
@@ -72,7 +77,7 @@
     <div id="outcome"></div>
     <p id="notice">Fields fill in as the caller answers. Reference: <span id="ref">-</span></p>
   </aside>
-  <footer>Powered by Awarri Technologies and the Federal Government of Nigeria (N-ATLaS). <a href="/cases" style="color:inherit">Staff view</a></footer>
+  <footer>Powered by Awarri Technologies and the Federal Government of Nigeria (N-ATLaS).</footer>
 </main>
 
 <script>
