@@ -11,6 +11,7 @@ from app import create_app
 def no_complainttrace(monkeypatch):
     """Tests must never send fake complaints to a running ComplaintTrace."""
     monkeypatch.delenv("COMPLAINTTRACE_URL", raising=False)
+    monkeypatch.delenv("STAFF_PASSWORD", raising=False)   # tests must not be blocked by the staff sign-in
 
 
 class FakeClient:

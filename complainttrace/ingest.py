@@ -12,12 +12,15 @@ Environment variables (all optional):
 Only the saved fields (issue, amount, when, bank, account) arrive here. The transcript never leaves the voice app.
 All actions are simulated: no real bank system is connected.
 """
-import csv, json, os, re, sqlite3, sys, threading
+import csv, hmac, json, os, re, sqlite3, sys, threading
 from datetime import datetime, timedelta
 from linker import extract, link_facts, load_txns, FMT
 from decide import decide
 from reversals import due, policy_for, row_for, POLICY
 from incidents import detect as detect_incidents, load_history
+
+from envfile import load_env
+load_env()                                    # reads .env next to this file; the terminal still overrides it
 
 DEMO_AS_OF = os.environ.get("DEMO_AS_OF")
 txns, ts_list, by_id = load_txns()
@@ -69,11 +72,17 @@ def demo_cases():
     print("CASE C (nothing matches)\n  say: I sent 987600 naira yesterday around 4pm to account 1234567890. It failed but I was debited.\n  expected: unmatched, goes to a human\n")
 
 
-if __name__ == "__main__":
-    if "--cases" in sys.argv:
-        demo_cases(); sys.exit()
+def build_app():
     from flask import Flask, jsonify, request
     app = Flask(__name__)
+
+    @app.before_request
+    def _shared_secret():
+        """If TRACE_KEY is set, every request except /health must carry it. Unset = open (fine on your own computer)."""
+        key = os.environ.get("TRACE_KEY", "")
+        if key and request.path != "/health" and not hmac.compare_digest(request.headers.get("X-Trace-Key", "").encode(), key.encode()):
+            return jsonify(error="forbidden"), 403
+
     db = sqlite3.connect(os.environ.get("CASES_DB", "cases.db"), check_same_thread=False)
     db.row_factory = sqlite3.Row
     db.executescript("""
@@ -224,4 +233,10 @@ if __name__ == "__main__":
         print("WARNING: DEMO_AS_OF is not set. Calls are stamped with today's date, but the synthetic log ends 4 Oct 2026, so nothing will match.")
     run_sweep()
     print(f"ComplaintTrace ready: {len(txns):,} transactions, {len(ALERTS)} alerts loaded. As-of: {DEMO_AS_OF or 'real time'}")
-    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", 8000)), debug=False)
+    return app
+
+
+if __name__ == "__main__":
+    if "--cases" in sys.argv:
+        demo_cases(); sys.exit()
+    build_app().run(host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 8000)), debug=False)
