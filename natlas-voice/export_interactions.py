@@ -11,7 +11,10 @@ import sys
 from datetime import datetime
 
 from db import make_store
-
+from envfile import load_env
+load_env()                                   # read the same .env the app uses
+import os
+print("Reading from:", ("MySQL/TiDB host " + os.environ["DB_HOST"] + ", database " + os.environ.get("DB_NAME", "natlas_voice")) if os.environ.get("DB_HOST") else "local SQLite file " + os.environ.get("DB_PATH", "complaints.db"))
 
 def _when(v):
     if isinstance(v, (int, float)):
